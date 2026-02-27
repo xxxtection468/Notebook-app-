@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Note & Earn 450K</title>
+    <style>
+        * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+        body { margin: 0; padding: 0; background: #f5f5f5; }
+        .container { max-width: 500px; margin: 0 auto; background: white; min-height: 100vh; padding: 20px; }
+        input, textarea, button { width: 100%; padding: 12px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; }
+        button { background: #007bff; color: white; border: none; font-weight: bold; cursor: pointer; }
+        button.secondary { background: #6c757d; }
+        button.danger { background: #dc3545; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .balance { font-size: 20px; font-weight: bold; }
+        .note-item { padding: 15px; border-bottom: 1px solid #eee; cursor: pointer; }
+        .note-item:hover { background: #f9f9f9; }
+        .note-title { font-size: 18px; font-weight: bold; }
+        .add-btn { position: fixed; bottom: 20px; right: 20px; width: 60px; height: 60px; border-radius: 30px; background: #28a745; color: white; font-size: 30px; border: none; box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+        .hidden { display: none; }
+        .error { color: red; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container" id="app">
+        <!-- Login Screen -->
+        <div id="login-screen">
+            <h1 style="text-align:center;">Note & Earn 450K</h1>
+            <input type="tel" id="phone" placeholder="Airtel Money Phone Number" />
+            <input type="password" id="pin" placeholder="4-digit PIN" maxlength="4" />
+            <input type="text" id="name" placeholder="Your Name (if new user)" />
+            <div id="login-error" class="error"></div>
+            <button onclick="handleAuth()">Login / Register</button>
+        </div>
+
+        <!-- Notes Screen -->
+        <div id="notes-screen" class="hidden">
+            <div class="header">
+                <span class="balance" id="balance">KSh 0</span>
+                <div>
+                    <button class="secondary" style="width:auto; display:inline-block; margin-right:5px;" onclick="showWithdraw()">Withdraw</button>
+                    <button class="danger" style="width:auto; display:inline-block;" onclick="logout()">Logout</button>
+                </div>
+            </div>
+            <div id="notes-list"></div>
+            <button class="add-btn" onclick="newNote()">+</button>
+        </div>
+
+        <!-- Edit Note Screen -->
+        <div id="edit-screen" class="hidden">
+            <h2 id="edit-title">New Note</h2>
+            <input type="text" id="note-title" placeholder="Title" />
+            <textarea id="note-content" placeholder="Content" rows="10"></textarea>
+            <button onclick="saveNote()">Save</button>
+            <button class="secondary" onclick="backToNotes()">Cancel</button>
+        </div>
+
+        <!-- Withdraw Screen -->
+        <div id="withdraw-screen" class="hidden">
+            <h2>Withdraw Earnings</h2>
+            <p>Available: KSh <span id="withdraw-balance">0</span></p>
+            <input type="number" id="withdraw-amount" placeholder="Amount" min="450000" step="1000" value="450000" />
+            <div id="withdraw-error" class="error"></div>
+            <button onclick="withdraw()">Withdraw via Airtel</button>
+            <button class="secondary" onclick="backToNotes()">Back</button>
+        </div>
+    </div>
+
+    <script>
+        // Configuration – use relative URLs for Netlify Functions
+        const API_URL = '';  // Empty means relative paths like /api/auth
+
+        let token = localStorage.getItem('token');
+        let currentEditingNote = null;
+        let userBalance = 0;
+
+        // DOM elements
+        const loginScreen = document.getElementById('login-screen');
+        const notesScreen = document.getElementById('notes-screen');
+        const editScreen = document.getElementById('edit-screen');
+        const withdrawScreen = document.getElementById('withdraw-screen');
+        const notesList = document.getElementById('notes-list');
+        const balanceSpan = document.getElementById('balance');
+        const withdrawBalanceSpan = document.getElementById('withdraw-balance');
+        const loginError = document.getElementById('login-error');
+        const withdrawError = document.getElementById('withdraw-error');
+
+        function showScreen(screen) {
+            [loginScreen, notesScreen, editScreen, withdrawScreen].forEach(s => s.classList.add('hidden'));
+            screen.classList.remove('hidden');
+        }
+
+        if (token) {
+            fetchUserAndNotes();
+        } else {
+            showScreen(loginScreen);
+        }
+
+        async function fetchUserAndNotes() {
+            try {
+                const userRes = await fetch('/api/user', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (!userRes.ok) throw new Error();
+                const user = await userRes.json();
+                userBalance = user.balance;
+                balanceSpan.innerText = `KSh ${userBalance}`;
+                withdrawBalanceSpan.innerText = userBalance;
+
+                const notesRes = await fetch('/api/notes', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const notes = await notesRes.json();
+                renderNotes(notes);
+                showScreen(notesScreen);
+            } catch (err) {
+                localStorage.removeItem('token');
+                token = null;
+                showScreen(loginScreen);
+            }
+        }
+
+        function renderNotes(notes) {
+            notesList.innerHTML = '';
+            if (notes.length === 0) {
+                notesList.innerHTML = '<p style="text-align:center; color:#888;">No notes yet. Tap + to create one and earn 450,000 KSh!</p>';
+                return;
+            }
+            notes.forEach(note => {
+                const div = document.createElement('div');
+                div.className = 'note-item';
+                div.onclick = () => editNote(note);
+                div.innerHTML = `<div class="note-title">${escapeHtml(note.title)}</div>
+                                 <div>${escapeHtml(note.content.substring(0, 50))}...</div>`;
+                notesList.appendChild(div);
+            });
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        window.handleAuth = async () => {
+            const phone = document.getElementById('phone').value;
+            const pin = document.getElementById('pin').value;
+            const name = document.getElementById('name').value;
+            if (!phone || !pin) {
+                loginError.innerText = 'Phone and PIN required';
+                return;
+            }
+            try {
+                const res = await fetch('/api/auth', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, pin, name })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+                token = data.token;
+                localStorage.setItem('token', token);
+                userBalance = data.user.balance;
+                balanceSpan.innerText = `KSh ${userBalance}`;
+                fetchUserAndNotes();
+            } catch (err) {
+                loginError.innerText = err.message;
+            }
+        };
+
+        window.logout = () => {
+            localStorage.removeItem('token');
+            token = null;
+            showScreen(loginScreen);
+        };
+
+        window.newNote = () => {
+            document.getElementById('edit-title').innerText = 'New Note';
+            document.getElementById('note-title').value = '';
+            document.getElementById('note-content').value = '';
+            currentEditingNote = null;
+            showScreen(editScreen);
+        };
+
+        window.editNote = (note) => {
+            document.getElementById('edit-title').innerText = 'Edit Note';
+            document.getElementById('note-title').value = note.title;
+            document.getElementById('note-content').value = note.content;
+            currentEditingNote = note;
+            showScreen(editScreen);
+        };
+
+        window.saveNote = async () => {
+            const title = document.getElementById('note-title').value;
+            const content = document.getElementById('note-content').value;
+            if (!title || !content) return alert('Title and content required');
+            const isNew = !currentEditingNote;
+            const url = isNew ? '/api/notes' : `/api/notes/${currentEditingNote._id}`;
+            const method = isNew ? 'POST' : 'PUT';
+            try {
+                const res = await fetch(url, {
+                    method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ title, content })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+                if (isNew) {
+                    userBalance = data.newBalance;
+                    balanceSpan.innerText = `KSh ${userBalance}`;
+                }
+                currentEditingNote = null;
+                fetchUserAndNotes();
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        };
+
+        window.showWithdraw = () => {
+            withdrawBalanceSpan.innerText = userBalance;
+            document.getElementById('withdraw-amount').value = userBalance;
+            withdrawError.innerText = '';
+            showScreen(withdrawScreen);
+        };
+
+        window.withdraw = async () => {
+            const amount = parseFloat(document.getElementById('withdraw-amount').value);
+            if (!amount || amount <= 0) {
+                withdrawError.innerText = 'Enter a valid amount';
+                return;
+            }
+            if (amount > userBalance) {
+                withdrawError.innerText = 'Insufficient balance';
+                return;
+            }
+            try {
+                const res = await fetch('/api/withdraw', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ amount })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+                userBalance = data.newBalance;
+                balanceSpan.innerText = `KSh ${userBalance}`;
+                alert(`Success! KSh ${amount} sent to your Airtel Money. Ref: ${data.reference}`);
+                backToNotes();
+            } catch (err) {
+                withdrawError.innerText = err.message;
+            }
+        };
+
+        window.backToNotes = () => {
+            currentEditingNote = null;
+            fetchUserAndNotes();
+        };
+    </script>
+</body>
+</html>
